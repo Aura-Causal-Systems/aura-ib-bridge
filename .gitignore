@@ -1,0 +1,15 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.spec
+packaging/bridge.ico
+build-debug/
+dist-debug/
+*.log
+bridge.json
+.vscode/
+.idea/
+Thumbs.db
