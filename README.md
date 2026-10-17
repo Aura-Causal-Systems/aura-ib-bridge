@@ -75,11 +75,14 @@ which are not cash balances or positions. Compare with the `ledger_*` fields bef
 .venv\python.exe scripts\smoke_tws.py # against a running TWS: prints what desks would see
 ```
 
-Release: bump `ib_bridge/__init__.py`, run `.\packaging\build.ps1` (needs Inno Setup:
-`winget install JRSoftware.InnoSetup`), then on GitHub *Releases → Draft a new release*, tag
-`v<version>`, attach `dist\release\Aura-IB-Bridge-Setup.exe` and `SHA256SUMS.txt`, publish. Desks link
-to `https://github.com/Aura-Causal-Systems/aura-ib-bridge/releases/latest/download/Aura-IB-Bridge-Setup.exe`,
-so the file name must stay the same.
+Release: bump `ib_bridge/__init__.py` and push, then on GitHub *Releases → Draft a new release* with
+tag `v<version>` and **Publish** (no files needed). The `release` workflow
+(`.github/workflows/release.yml`) runs the tests on GitHub's Windows machines, builds
+`Aura-IB-Bridge-Setup.exe` from that exact tagged source and attaches it with `SHA256SUMS.txt`
+(the job summary shows the commit and checksum). Desks link to
+`https://github.com/Aura-Causal-Systems/aura-ib-bridge/releases/latest/download/Aura-IB-Bridge-Setup.exe`,
+so the file name must stay the same. A local `.\packaging\build.ps1` (needs Inno Setup:
+`winget install JRSoftware.InnoSetup`) produces the same files in `dist\release\` for testing.
 
 Live findings against TWS (IB API quirks, event-contract modelling): [`docs/TWS-NOTES.md`](docs/TWS-NOTES.md).
 

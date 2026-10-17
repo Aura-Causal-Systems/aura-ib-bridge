@@ -28,7 +28,11 @@ internal infrastructure details (Cloudflare/D1 ids, private repo paths).
 - Config written by PowerShell 5 / Notepad may carry a BOM: read with `utf-8-sig`.
 
 ## Release
-`ib_bridge/__init__.py` version → build → GitHub Release `v<version>` with
-`dist\release\Aura-IB-Bridge-Setup.exe` (stable name; desks link to `releases/latest/download/...`).
+`ib_bridge/__init__.py` version → push → publish a GitHub Release tagged `v<version>` with no files:
+`.github/workflows/release.yml` builds on `windows-latest` (python.org 3.12 in a standard venv,
+`.venv\Scripts\python.exe`; Inno Setup via choco if missing) and attaches
+`Aura-IB-Bridge-Setup.exe` + `SHA256SUMS.txt` (stable name; desks link to `releases/latest/download/...`).
+Don't upload the installer by hand: browser uploads fail on slow uplinks. Re-run: Actions → release →
+Run workflow with the tag. `build.ps1` must keep working with both conda (`.venv\python.exe`) and venv.
 The installer replaces the pre-0.3 "IB Copilot Bridge"; the app migrates `%APPDATA%\ib-copilot`
 config (token included) to `%APPDATA%\aura-ib-bridge` on first start.

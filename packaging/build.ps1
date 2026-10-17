@@ -4,12 +4,14 @@
 #                                            dist\release\Aura-IB-Bridge-Setup.exe (stable name: attach to the GitHub Release)
 #   .\packaging\build.ps1 -SkipInstaller  -> exe only
 #   .\packaging\build.ps1 -DebugConsole   -> exe with a console window, to see startup tracebacks (never ship)
-# Requires .venv (see setup-bridge.ps1). Inno Setup 6: winget install JRSoftware.InnoSetup
+# Requires .venv: conda env (setup-bridge.ps1, .venv\python.exe) or a standard venv
+# (python -m venv .venv, .venv\Scripts\python.exe - used by the GitHub release workflow).
+# Inno Setup 6: winget install JRSoftware.InnoSetup
 param([switch]$SkipInstaller, [switch]$DebugConsole)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$py = Join-Path $root ".venv\python.exe"
-if (-not (Test-Path $py)) { Write-Error "Missing $py - run setup-bridge.ps1 first" }
+$py = @((Join-Path $root ".venv\python.exe"), (Join-Path $root ".venv\Scripts\python.exe")) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $py) { Write-Error "No .venv found - run setup-bridge.ps1 (or python -m venv .venv) first" }
 Set-Location $root
 
 $version = (& $py -c "import ib_bridge; print(ib_bridge.__version__)" | Select-Object -Last 1).Trim()

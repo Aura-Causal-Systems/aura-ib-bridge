@@ -1,0 +1,61 @@
+# Builds the Windows installer on GitHub's own machines and attaches it to the release.
+#
+# How to release: bump ib_bridge/__init__.py, push, then on GitHub "Draft a new release" with tag
+# v<that version> (no files needed) and Publish. This workflow runs the tests, builds
+# Aura-IB-Bridge-Setup.exe from the tagged source and attaches it plus SHA256SUMS.txt (a few minutes;
+# progress under the repo's "Actions" tab). Desks link to releases/latest/download/Aura-IB-Bridge-Setup.exe.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build and attach, e.g. v0.3.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create build environment
+        shell: pwsh
+        run: python -m venv .venv
+
+      - name: Check tag matches the app version
+        shell: pwsh
+        run: |
+          $version = (& .venv\Scripts\python.exe -c "import ib_bridge; print(ib_bridge.__version__)").Trim()
+          if ("v$version" -ne $env:TAG) { Write-Error "Tag $env:TAG does not match ib_bridge.__version__ $version" }
+
+      - name: Install Inno Setup if missing
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Test and build
+        shell: pwsh
+        run: .\packaging\build.ps1
+
+      - name: Attach installer to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload $env:TAG dist/release/Aura-IB-Bridge-Setup.exe dist/release/SHA256SUMS.txt --clobber
+          "Built from $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
+          Get-Content dist/release/SHA256SUMS.txt >> $env:GITHUB_STEP_SUMMARY
