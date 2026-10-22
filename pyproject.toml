@@ -1,6 +1,6 @@
 [project]
 name = "aura-ib-bridge"
-version = "0.3.0"
+version = "0.3.1"
 description = "Read-only local bridge between a trader's Interactive Brokers TWS and Aura Causal Systems web desks."
 requires-python = ">=3.12"
 dependencies = [

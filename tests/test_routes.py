@@ -66,12 +66,47 @@ def test_resolve_micro_without_verified_micro_404(client, auth):
 
 def test_instruments_endpoint_lists_map(client, auth):
     rows = client.get("/instruments", headers=auth).json()
-    keys = {r["key"] for r in rows}
-    assert {"ES", "ZN", "USDJPY", "BUND"} <= keys
-    jpy = next(r for r in rows if r["key"] == "USDJPY")
-    assert jpy["direction_sign"] == -1 and jpy["ib"]["trading_class"] == "6J"
+    keys = [r["key"] for r in rows]
+    assert len(keys) == len(set(keys)), "instrument keys must be unique"
+    assert {"ES", "ZN", "USDJPY", "6J", "BUND", "EURUSD", "6E"} <= set(keys)
+    # FX ideas trade spot on IDEALPRO; the futures are alternatives for the same engine view
+    jpy_spot = next(r for r in rows if r["key"] == "USDJPY")
+    assert jpy_spot["ib"]["sec_type"] == "CASH" and jpy_spot["ib"]["exchange"] == "IDEALPRO"
+    assert jpy_spot["direction_sign"] == 1 and jpy_spot["role"] == "primary"
+    assert jpy_spot["ib"]["tick_size"] is None  # taken from IB minTick at runtime, never guessed
+    jpy_fut = next(r for r in rows if r["key"] == "6J")
+    assert jpy_fut["direction_sign"] == -1 and jpy_fut["ib"]["trading_class"] == "6J" and jpy_fut["role"] == "alternative"
+    assert jpy_fut["engine_symbol"] == "USDJPY"
     zn = next(r for r in rows if r["key"] == "ZN")
     assert zn["notation"] == "32nds"
+    # exactly one primary instrument per engine symbol
+    primaries = [r["engine_symbol"] for r in rows if r["role"] == "primary" and r["engine_symbol"]]
+    assert len(primaries) == len(set(primaries))
+
+
+def test_find_instrument_prefers_keys_then_primary():
+    from ib_bridge.instruments import contract_for, find_instrument
+
+    assert find_instrument("EURUSD").ib.sec_type == "CASH"
+    assert find_instrument("6E").ib.trading_class == "6E"
+    assert find_instrument("eurusd").key == "EURUSD"
+    assert find_instrument("FGBL").key == "BUND"  # trading class still works
+    fx = contract_for(find_instrument("USDJPY"))
+    assert (fx.secType, fx.symbol, fx.currency, fx.exchange) == ("CASH", "USD", "JPY", "IDEALPRO")
+
+
+def test_resolve_spot_fx_returns_the_single_contract(client, auth, fake_ib):
+    from types import SimpleNamespace
+
+    from tests.conftest import make_contract
+
+    fake_ib._connected = True
+    eur = make_contract(conId=12087792, symbol="EUR", localSymbol="EUR.USD", secType="CASH", exchange="IDEALPRO", currency="USD", tradingClass="EUR.USD")
+    fake_ib._details[eur.conId] = SimpleNamespace(contract=eur, minTick=5e-05, realExpirationDate="", lastTradeTime="", longName="European Monetary Union Euro")
+    body = client.get("/contracts/resolve?key=EURUSD", headers=auth).json()
+    assert body["front"]["con_id"] == 12087792 and body["front"]["sec_type"] == "CASH"
+    assert body["next"] is None and body["roll_note"] is None
+    assert body["min_tick"] == 5e-05
 
 
 def test_cors_preflight_carries_private_network_header(client):

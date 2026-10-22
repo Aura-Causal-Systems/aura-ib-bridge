@@ -1,4 +1,4 @@
-"""Engine <-> IB instrument map, loaded from ../../instruments.json (single source)."""
+"""Engine <-> IB instrument map, loaded from instruments.json at the repository root (single source)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from ib_async import Contract, Future, Stock
+from ib_async import Contract, Forex, Future, Stock
+
+SINGLE_CONTRACT_SEC_TYPES = {"STK", "CASH"}  # no expiries: resolve returns the one contract
 
 
 @dataclass(frozen=True)
@@ -33,12 +35,14 @@ class MicroSpec:
 
 @dataclass(frozen=True)
 class Instrument:
+    key: str  # stable lookup key (resolve?key=), e.g. ES, 6E, EURUSD (spot), BUND
+    role: str  # primary | alternative | context | curve
     engine_symbol: str | None
     engine_desk: str
     display_name: str
     ib: IbSpec
     multiplier: float
-    tick_size: float
+    tick_size: float | None  # None = take IB's minTick at runtime (e.g. spot FX)
     notation: str
     direction_sign: int
     micro: MicroSpec | None
@@ -46,10 +50,6 @@ class Instrument:
     roll_window_days: int | None
     notes: str | None
     tick_fraction_of_32nd: float | None
-
-    @property
-    def key(self) -> str:
-        return self.engine_symbol or self.ib.trading_class or self.ib.symbol
 
 
 def instruments_file() -> Path:
@@ -89,14 +89,17 @@ def load_instruments() -> tuple[Instrument, ...]:
     raw = json.loads(instruments_file().read_text(encoding="utf-8"))
     out: list[Instrument] = []
     for r in raw["instruments"]:
+        spec = _spec(r["ib"])
         out.append(
             Instrument(
+                key=r.get("key") or r.get("engine_symbol") or spec.trading_class or spec.symbol,
+                role=r.get("role", "primary"),
                 engine_symbol=r.get("engine_symbol"),
                 engine_desk=r["engine_desk"],
                 display_name=r["display_name"],
-                ib=_spec(r["ib"]),
+                ib=spec,
                 multiplier=float(r["multiplier"]),
-                tick_size=float(r["tick_size"]),
+                tick_size=float(r["tick_size"]) if r.get("tick_size") is not None else None,
                 notation=r.get("notation", "decimal"),
                 direction_sign=int(r.get("direction_sign", 1)),
                 micro=_micro(r.get("micro")),
@@ -110,12 +113,16 @@ def load_instruments() -> tuple[Instrument, ...]:
 
 
 def find_instrument(key: str) -> Instrument | None:
-    """Look up by engine symbol, IB trading class, or IB symbol (case-insensitive)."""
+    """Look up by key first, then by the primary instrument for an engine symbol, then IB trading class / symbol."""
     k = key.upper()
-    for inst in load_instruments():
-        if (inst.engine_symbol or "").upper() == k:
+    insts = load_instruments()
+    for inst in insts:
+        if inst.key.upper() == k:
             return inst
-    for inst in load_instruments():
+    for inst in insts:
+        if (inst.engine_symbol or "").upper() == k and inst.role == "primary":
+            return inst
+    for inst in insts:
         if (inst.ib.trading_class or "").upper() == k or inst.ib.symbol.upper() == k:
             return inst
     return None
@@ -128,6 +135,8 @@ def contract_for(inst: Instrument, micro: bool = False, expiry: str = "") -> Con
         if inst.ib.primary_exchange:
             c.primaryExchange = inst.ib.primary_exchange
         return c
+    if inst.ib.sec_type == "CASH":
+        return Forex(pair=f"{inst.ib.symbol}{inst.ib.currency}", exchange=inst.ib.exchange)
     if micro:
         if not inst.micro:
             raise ValueError(f"{inst.key} has no verified micro contract")

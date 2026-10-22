@@ -54,12 +54,13 @@ Base URL `http://localhost:7801`, header `Authorization: Bearer <token>`, all `G
 | `/account/summary` | NetLiq, cash, margin, buying power; `daily/unrealized/realized_pnl` (IB P&L feed) and `ledger_unrealized/realized_pnl` (account ledger) |
 | `/positions`, `/orders`, `/fills?since=` | the book as IB reports it |
 | `/quotes?conIds=` | streaming quotes with `freshness` |
-| `/instruments` | the engine ↔ IB instrument map (`instruments.json`) |
-| `/contracts/resolve?key=ES[&micro=true]`, `/contracts/search?text=` | front month / roll note; symbol search |
+| `/instruments` | the engine ↔ IB instrument map (`instruments.json`): `key`, `role` (primary / alternative / context / curve), engine symbol, IB spec, multiplier, tick, notation |
+| `/contracts/resolve?key=ES[&micro=true]`, `/contracts/search?text=` | front month / roll note (futures) or the single contract (spot FX, ETF); symbol search. Keys: ES NQ VX GC SI CL BZ NG DXY · spot FX EURUSD USDJPY GBPUSD (IDEALPRO) · FX futures 6E 6J 6B · ZN ZB ZT ZF TN UB BUND · HYG |
 | `/bars?conId=&duration=1 D&barSize=5 mins&what=TRADES` | historical bars, or `entitled:false` + IB's error |
 | `/events/venues[?probe=true]`, `/events/products`, `/events/chain`, `/events/quotes` | IB event contracts with implied probability |
 
-Check `api_version` (currently **1**) and ask the trader to update when it is lower than you need.
+Check `api_version` (currently **2**; 2 added explicit instrument keys and spot FX) and ask the trader
+to update when it is lower than you need.
 To make a new desk pairable: add it to `DESKS`, ship a release, and publish the `.well-known` file.
 
 Note on P&L: IB's P&L feed can include TWS **virtual FX positions** (currency-conversion tracking),

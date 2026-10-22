@@ -101,6 +101,7 @@ async def instruments():
     return [
         {
             "key": i.key,
+            "role": i.role,
             "engine_symbol": i.engine_symbol,
             "engine_desk": i.engine_desk,
             "display_name": i.display_name,

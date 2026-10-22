@@ -11,7 +11,7 @@ from ib_async import Contract
 from . import __version__
 from .branding import API_VERSION, APP_NAME
 from .ib_client import IBClient, LinesCapExceeded
-from .instruments import Instrument, contract_for, spec_dict
+from .instruments import SINGLE_CONTRACT_SEC_TYPES, Instrument, contract_for, spec_dict
 from .models import (
     AccountSummary,
     Bar,
@@ -276,7 +276,7 @@ class BridgeService:
             return ContractResolution(engine_symbol=inst.engine_symbol, ib_spec=spec, front=None, next=None, candidates=[], roll_note="bridge not connected", min_tick=None)
         probe = contract_for(inst, micro=micro)
         cds = await c.details(probe)
-        if inst.ib.sec_type == "STK":
+        if inst.ib.sec_type in SINGLE_CONTRACT_SEC_TYPES:
             cd = cds[0] if cds else None
             ref = contract_ref(cd.contract) if cd else None
             return ContractResolution(engine_symbol=inst.engine_symbol, ib_spec=spec, front=ref, next=None, candidates=[ref] if ref else [], roll_note=None, min_tick=(cd.minTick if cd else None))

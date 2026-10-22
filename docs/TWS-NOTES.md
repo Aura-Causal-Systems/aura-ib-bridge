@@ -33,6 +33,14 @@ They are a tracking view, not cash balances. Observed:
 - Request type 3 (`reqMarketDataType(3)`): live where the user is subscribed, delayed elsewhere; each
   ticker reports its own type. Observed: IDEALPRO FX live; CME/CBOT/COMEX/NYMEX futures delayed
   (IB message 10167) without futures subscriptions.
+- Spot FX (keys `EURUSD` / `USDJPY` / `GBPUSD`): `Forex(pair, exchange="IDEALPRO")` → `secType=CASH`,
+  `tradingClass`/`localSymbol` `EUR.USD`, conIds 12087792 / 15016059 / 12087797, `minTick` 0.00005
+  (EUR.USD, GBP.USD) and 0.005 (USD.JPY). Quotes stream live with bid, ask, last and close; quoted
+  prices carry one more decimal than `minTick` (e.g. bid 1.12355 / ask 1.12356).
+- Historical bars (`reqHistoricalData`, 5 min, 1 D) **are** returned without a futures subscription,
+  but delayed like the quotes: at 19:10 UTC the latest ES/CL bar started 18:55 (≈15 min late) while
+  EUR.USD MIDPOINT bars were current. `/bars` reports `entitled: true` in both cases: desks must take
+  the bars' freshness from the contract's quote (`freshness`), not from `entitled`.
 - Weekends: data farms report "connection is broken" (2103/2105) and positions may be reported empty;
   the bridge passes IB's state through.
 
