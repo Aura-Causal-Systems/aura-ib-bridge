@@ -1,9 +1,13 @@
-# Builds the Windows installer on GitHub's own machines and attaches it to the release.
+# Builds the Windows installer and the macOS disk images on GitHub's own machines and attaches them
+# to the release.
 #
 # How to release: bump ib_bridge/__init__.py, push, then on GitHub "Draft a new release" with tag
-# v<that version> (no files needed) and Publish. This workflow runs the tests, builds
-# Aura-IB-Bridge-Setup.exe from the tagged source and attaches it plus SHA256SUMS.txt (a few minutes;
-# progress under the repo's "Actions" tab). Desks link to releases/latest/download/Aura-IB-Bridge-Setup.exe.
+# v<that version> (no files needed) and Publish. This workflow runs the tests and builds from the
+# tagged source (a few minutes; progress under the repo's "Actions" tab), attaching:
+#   Aura-IB-Bridge-Setup.exe + SHA256SUMS.txt                       (Windows)
+#   Aura-IB-Bridge-mac-AppleSilicon.dmg + SHA256SUMS-mac-AppleSilicon.txt (M1/M2/M3/M4... Macs)
+#   Aura-IB-Bridge-mac-Intel.dmg + SHA256SUMS-mac-Intel.txt         (Intel Macs)
+# Desks link to releases/latest/download/<file name>; the names are stable across versions.
 name: release
 
 on:
@@ -59,3 +63,38 @@ jobs:
           gh release upload $env:TAG dist/release/Aura-IB-Bridge-Setup.exe dist/release/SHA256SUMS.txt --clobber
           "Built from $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
           Get-Content dist/release/SHA256SUMS.txt >> $env:GITHUB_STEP_SUMMARY
+
+  build-mac:
+    strategy:
+      fail-fast: false # an Intel-runner outage must not block the Apple Silicon build
+      matrix:
+        runner: [macos-latest, macos-15-intel] # Apple Silicon, Intel
+    runs-on: ${{ matrix.runner }}
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check tag matches the app version
+        run: |
+          version="$(python -c 'import ib_bridge; print(ib_bridge.__version__)')"
+          if [ "v$version" != "$TAG" ]; then echo "::error::Tag $TAG does not match ib_bridge.__version__ $version"; exit 1; fi
+
+      - name: Test and build
+        env:
+          PYTHON: python
+        run: packaging/build_mac.sh
+
+      - name: Attach disk image to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" dist/release/*.dmg dist/release/SHA256SUMS-mac-*.txt --clobber
+          echo "Built from $GITHUB_SHA on ${{ matrix.runner }}" >> "$GITHUB_STEP_SUMMARY"
+          cat dist/release/SHA256SUMS-mac-*.txt >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,6 @@
 # Aura IB Bridge
 
-A small Windows helper that lets [Aura Causal Systems](https://auracausalsystems.com/) web desks
+A small Windows and macOS helper that lets [Aura Causal Systems](https://auracausalsystems.com/) web desks
 (IB Copilot, Bond Copilot) read a trader's own **Interactive Brokers TWS** on the same computer:
 account values, positions, P&L, quotes, working orders, fills and IB event contracts (ForecastEx).
 
@@ -12,6 +12,8 @@ account values, positions, P&L, quotes, working orders, fills and IB event contr
    ever appears (`tests/test_routes.py::test_no_write_paths_exist`).
 
 ## For traders
+
+### Windows
 
 1. Download **Aura-IB-Bridge-Setup.exe** from the [latest release](https://github.com/Aura-Causal-Systems/aura-ib-bridge/releases/latest)
    (or from your desk's *Setup* page). Chrome may ask you to **Keep** it and Windows may say
@@ -25,6 +27,27 @@ Tray menu: **Open IB Copilot / Open Bond Copilot** · Copy pairing link · TWS a
 Gateway) · Start with Windows · View log · Quit. Blue icon = TWS connected, amber = waiting for TWS.
 
 Uninstall from Windows *Settings → Apps*. Settings and the token live in `%APPDATA%\aura-ib-bridge\`.
+
+### Mac
+
+1. Download the disk image for your Mac from the [latest release](https://github.com/Aura-Causal-Systems/aura-ib-bridge/releases/latest)
+   ( → *About This Mac*: "Chip: Apple M…" means Apple Silicon, "Processor: Intel" means Intel):
+   - Apple Silicon: **Aura-IB-Bridge-mac-AppleSilicon.dmg**
+   - Intel: **Aura-IB-Bridge-mac-Intel.dmg**
+2. Open it and drag **Aura IB Bridge** onto **Applications**.
+3. Open Aura IB Bridge from Applications. The first time, macOS says it cannot verify the developer
+   (the app is not yet signed with an Apple Developer ID): click **Done**, then go to
+   *System Settings → Privacy & Security*, scroll down and click **Open Anyway** next to
+   "Aura IB Bridge was blocked", and confirm with your password. This is needed once only.
+4. A small icon appears in the menu bar at the top right of the screen (there is no Dock icon).
+   Click it and choose **Open IB Copilot** or **Open Bond Copilot**; the desk opens already connected.
+5. In TWS, once: *TWS → Global Configuration → API → Settings* (on a Mac the menu is under the TWS
+   name) with the same ticks and ports as Windows step 3 above.
+
+The menu is the same as on Windows, with **Start at login** in place of *Start with Windows*; it is on
+after the first run. To uninstall: Quit from the menu, untick **Start at login** first (or delete
+`~/Library/LaunchAgents/com.auracausalsystems.ib-bridge.plist`), then drag the app from Applications
+to the Bin. Settings and the token live in `~/Library/Application Support/aura-ib-bridge/`.
 
 ## Security and privacy model
 
@@ -68,6 +91,8 @@ which are not cash balances or positions. Compare with the `ledger_*` fields bef
 
 ## Development
 
+Windows:
+
 ```powershell
 .\setup-bridge.ps1                    # conda Python 3.12 env in .venv, deps, tests, token
 .venv\python.exe -m pytest -q         # no TWS needed (fake IB in tests/conftest.py)
@@ -84,6 +109,20 @@ tag `v<version>` and **Publish** (no files needed). The `release` workflow
 `https://github.com/Aura-Causal-Systems/aura-ib-bridge/releases/latest/download/Aura-IB-Bridge-Setup.exe`,
 so the file name must stay the same. A local `.\packaging\build.ps1` (needs Inno Setup:
 `winget install JRSoftware.InnoSetup`) produces the same files in `dist\release\` for testing.
+
+macOS (Python 3.12 from python.org or `brew install python@3.12`):
+
+```bash
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ib_bridge.tray      # menu-bar app from source (quit the installed one first)
+packaging/build_mac.sh                  # dist/Aura IB Bridge.app + dist/release/Aura-IB-Bridge-mac-<arch>.dmg
+```
+
+The `release` workflow also builds both Mac disk images (`Aura-IB-Bridge-mac-AppleSilicon.dmg` on
+`macos-latest`, `Aura-IB-Bridge-mac-Intel.dmg` on `macos-15-intel`) and attaches them with their
+`SHA256SUMS-mac-<arch>.txt`. The `mac-build` workflow builds the same disk images for pull requests
+(download them from the run's *Artifacts*) so a Mac change can be tried before a release.
 
 Live findings against TWS (IB API quirks, event-contract modelling): [`docs/TWS-NOTES.md`](docs/TWS-NOTES.md).
 
