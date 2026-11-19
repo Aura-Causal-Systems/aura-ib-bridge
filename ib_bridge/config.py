@@ -1,4 +1,5 @@
-"""Bridge configuration: %APPDATA%\\aura-ib-bridge\\bridge.json (override with IB_BRIDGE_CONFIG).
+"""Bridge configuration: %APPDATA%\\aura-ib-bridge\\bridge.json on Windows,
+~/Library/Application Support/aura-ib-bridge/bridge.json on macOS (override with IB_BRIDGE_CONFIG).
 
 On first run the file is created with a fresh bearer token. The token is the
 only credential a desk needs. The tray app hands it to a desk through a pairing
@@ -15,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -71,7 +73,13 @@ class BridgeConfig:
 
 
 def _appdata() -> Path:
-    return Path(os.environ.get("APPDATA") or str(Path.home()))
+    """Per-user settings root: %APPDATA% on Windows, ~/Library/Application Support on macOS."""
+    env = os.environ.get("APPDATA")
+    if env:
+        return Path(env)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path.home()
 
 
 def config_dir() -> Path:

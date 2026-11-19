@@ -1,30 +1,36 @@
-"""Aura IB Bridge - Windows tray application.
+"""Aura IB Bridge - tray / menu-bar application (Windows and macOS).
 
 Wraps the read-only bridge (main.create_app) so a trader never sees a console:
 a tray icon shows whether TWS is connected, and the menu opens each configured
 web desk with a pairing link carrying the bearer token in the URL fragment
 (never sent to any server) - only for desks that advertise pairing support
 (see desks.py). Runs uvicorn in a background thread; the tray owns the main
-thread. Logs to %APPDATA%\\aura-ib-bridge\\bridge.log.
+thread. Logs to %APPDATA%\\aura-ib-bridge\\bridge.log (Windows) or
+~/Library/Application Support/aura-ib-bridge/bridge.log (macOS).
 
-Entry point for the PyInstaller build (packaging/build.ps1) and for
+Platform differences are confined to the helpers below: message boxes, autostart
+(HKCU Run key / LaunchAgent), clipboard, opening files, and - on macOS - running
+AppKit calls on the main thread.
+
+Entry point for the PyInstaller builds (packaging/build.ps1, packaging/build_mac.sh) and for
 `python -m ib_bridge.tray` during development.
 """
 
 from __future__ import annotations
 
 import asyncio
-import ctypes
 import logging
 import logging.handlers
 import os
+import plistlib
 import socket
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 import uvicorn
 from PIL import Image, ImageDraw
@@ -37,6 +43,9 @@ from .ib_client import IBClient
 from .main import create_app
 
 log = logging.getLogger("ib_bridge.tray")
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 
 # Tray colours follow the desk's semantics: primary (blue) = good, amber = attention, grey = starting.
 COLOR_CONNECTED = (56, 189, 248)
@@ -72,11 +81,62 @@ def setup_logging(level: str) -> None:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
-def message_box(text: str, title: str = APP_NAME, icon: int = 0x40) -> None:
+# Windows MessageBox icon codes, reused as a severity hint on macOS.
+MB_ERROR, MB_WARNING, MB_INFO = 0x10, 0x30, 0x40
+
+
+def _applescript_string(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def message_box(text: str, title: str = APP_NAME, icon: int = MB_INFO) -> None:
+    """Modal notice. Blocks the calling thread until dismissed, so call it off the menu thread."""
     try:
-        ctypes.windll.user32.MessageBoxW(None, text, title, icon)  # type: ignore[attr-defined]
+        if IS_WINDOWS:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, text, title, icon)  # type: ignore[attr-defined]
+            return
+        if IS_MAC:
+            kind = {MB_ERROR: "stop", MB_WARNING: "caution"}.get(icon, "note")
+            script = (
+                f"display dialog {_applescript_string(text)} with title {_applescript_string(title)} "
+                f'buttons {{"OK"}} default button "OK" with icon {kind}'
+            )
+            subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+            return
     except Exception:  # noqa: BLE001
-        print(f"{title}: {text}")
+        pass
+    print(f"{title}: {text}")
+
+
+def copy_to_clipboard(text: str) -> None:
+    if IS_WINDOWS:
+        subprocess.run(["clip"], input=text.encode("utf-16le"), check=True, creationflags=0x08000000)
+    elif IS_MAC:
+        subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+    else:
+        raise RuntimeError("no clipboard helper on this platform")
+
+
+def open_path(path: Path) -> None:
+    """Open a file or folder with the system's default application."""
+    if IS_WINDOWS:
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif IS_MAC:
+        subprocess.run(["open", str(path)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(path)], check=False)
+
+
+def on_main_thread(fn: Callable[[], None]) -> None:
+    """AppKit (macOS menu bar) must only be touched from the main thread; elsewhere just call."""
+    if IS_MAC:
+        from PyObjCTools import AppHelper
+
+        AppHelper.callAfter(fn)
+    else:
+        fn()
 
 
 def port_in_use(host: str, port: int) -> bool:
@@ -99,12 +159,41 @@ def render_icon(color: tuple[int, int, int], size: int = 64) -> Image.Image:
     return img
 
 
-# ----------------------------------------------------------------------------- autostart (HKCU Run key)
+# ----------------------------------------------------------------------------- autostart
+# Windows: HKCU Run value.  macOS: a per-user LaunchAgent that opens the .app at login.
+AUTOSTART_LABEL = "com.auracausalsystems.ib-bridge"
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_MENU_LABEL = "Start at login" if IS_MAC else "Start with Windows"
+
+
+def _launch_agent_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{AUTOSTART_LABEL}.plist"
+
+
+def _mac_app_bundle() -> Path | None:
+    """The enclosing .app when running frozen (sys.executable is .app/Contents/MacOS/<name>)."""
+    exe = Path(sys.executable).resolve()
+    for parent in exe.parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def _mac_launch_args() -> list[str]:
+    bundle = _mac_app_bundle() if getattr(sys, "frozen", False) else None
+    if bundle:
+        # `open` launches it as a normal app (menu-bar icon, no duplicate if already running).
+        return ["/usr/bin/open", "-a", str(bundle)]
+    return [sys.executable, "-m", "ib_bridge.tray"]
+
+
 def autostart_enabled() -> bool:
+    if IS_MAC:
+        return _launch_agent_path().exists()
     try:
         import winreg
 
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as k:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
             winreg.QueryValueEx(k, APP_ID)
             return True
     except OSError:
@@ -112,9 +201,18 @@ def autostart_enabled() -> bool:
 
 
 def set_autostart(enabled: bool) -> None:
+    if IS_MAC:
+        path = _launch_agent_path()
+        if enabled:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            plist = {"Label": AUTOSTART_LABEL, "ProgramArguments": _mac_launch_args(), "RunAtLoad": True}
+            path.write_bytes(plistlib.dumps(plist))
+        else:
+            path.unlink(missing_ok=True)
+        return
     import winreg
 
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE) as k:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
         if enabled:
             exe = sys.executable if getattr(sys, "frozen", False) else f'"{sys.executable}" -m ib_bridge.tray'
             winreg.SetValueEx(k, APP_ID, 0, winreg.REG_SZ, f'"{exe}"' if getattr(sys, "frozen", False) else exe)
@@ -125,13 +223,32 @@ def set_autostart(enabled: bool) -> None:
                 pass
 
 
+def ensure_default_autostart() -> None:
+    """macOS has no installer step for 'start at login': turn it on the first time the app runs,
+    as the Windows installer does by default. The trader can switch it off in the menu."""
+    if not (IS_MAC and getattr(sys, "frozen", False)):
+        return
+    marker = log_path().with_name(".autostart-initialised")
+    if marker.exists():
+        return
+    try:
+        set_autostart(True)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("1", encoding="utf-8")
+        log.info("start at login enabled (first run)")
+    except OSError as exc:
+        log.warning("could not enable start at login: %s", exc)
+
+
 def migrate_legacy_autostart() -> None:
-    """The pre-0.3 'IB Copilot Bridge' registered its own Run value; replace it with ours."""
+    """The pre-0.3 'IB Copilot Bridge' registered its own Run value; replace it with ours (Windows only)."""
+    if not IS_WINDOWS:
+        return
     import winreg
 
     found = False
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as k:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as k:
             for legacy in LEGACY_APP_IDS:
                 try:
                     winreg.QueryValueEx(k, legacy)
@@ -233,12 +350,14 @@ def run_tray() -> int:
         APP_NAME, __version__, cfg.bridge_url, cfg.tws_host, cfg.tws_port, ", ".join(d.get("origin", "?") for d in cfg.desks),
     )
     migrate_legacy_autostart()
+    ensure_default_autostart()
 
     if port_in_use(cfg.bind_host, cfg.bind_port):
+        where = "in the menu bar at the top of the screen" if IS_MAC else "next to the clock"
         message_box(
             f"{APP_NAME} (or an older IB Copilot Bridge) is already running: port {cfg.bind_port} is in use.\n\n"
-            "Look for its icon next to the clock, or quit it there and start this one again.",
-            icon=0x30,
+            f"Look for its icon {where}, or quit it there and start this one again.",
+            icon=MB_WARNING,
         )
         return 1
 
@@ -264,33 +383,41 @@ def run_tray() -> int:
         def work() -> None:
             pair_path = discover_pair_path(desk["origin"])
             if not pair_path:
-                message_box(f"{desk.get('name', 'This desk')} does not support connecting to {APP_NAME} yet.", icon=0x40)
+                message_box(f"{desk.get('name', 'This desk')} does not support connecting to {APP_NAME} yet.", icon=MB_INFO)
                 return
             url = cfg.pairing_url(desk, pair_path)
             try:
-                subprocess.run(["clip"], input=url.encode("utf-16le"), check=True, creationflags=0x08000000)
+                copy_to_clipboard(url)
                 log.info("pairing link for %s copied to clipboard", desk.get("name"))
             except Exception as exc:  # noqa: BLE001
-                message_box(f"Could not copy: {exc}", icon=0x30)
+                message_box(f"Could not copy: {exc}", icon=MB_WARNING)
 
         threading.Thread(target=work, name="copy-pairing", daemon=True).start()
 
     def open_log(_icon: Any = None, _item: Any = None) -> None:
-        os.startfile(str(log_path()))  # type: ignore[attr-defined]
+        open_path(log_path())
 
     def open_config_folder(_icon: Any = None, _item: Any = None) -> None:
-        os.startfile(str(log_path().parent))  # type: ignore[attr-defined]
+        open_path(log_path().parent)
 
     def set_port(port: int):
         def _handler(_icon: Any = None, _item: Any = None) -> None:
             if cfg.tws_port != port:
                 runtime.reconnect_with_port(port)
                 log.info("TWS port switched to %s", port)
+            refresh_menu()
 
         return _handler
 
     def toggle_autostart(_icon: Any = None, _item: Any = None) -> None:
         set_autostart(not autostart_enabled())
+        refresh_menu()
+
+    def refresh_menu() -> None:
+        # Windows re-reads checked/text callables each time the menu opens; macOS builds the
+        # NSMenu once, so rebuild it whenever something it shows has changed.
+        if IS_MAC:
+            on_main_thread(icon.update_menu)
 
     def quit_app(icon: Any, _item: Any = None) -> None:
         log.info("quit requested")
@@ -323,7 +450,7 @@ def run_tray() -> int:
                 pystray.MenuItem("IB Gateway paper (4002)", set_port(4002), checked=lambda _i: cfg.tws_port == 4002, radio=True),
             ),
         ),
-        pystray.MenuItem("Start with Windows", toggle_autostart, checked=lambda _i: autostart_enabled()),
+        pystray.MenuItem(AUTOSTART_MENU_LABEL, toggle_autostart, checked=lambda _i: autostart_enabled()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("View log", open_log),
         pystray.MenuItem("Open settings folder", open_config_folder),
@@ -352,10 +479,13 @@ def run_tray() -> int:
                     color = COLOR_WAITING
                 if text != state["text"]:
                     state["text"] = text
-                    icon.title = f"{APP_NAME}: {text}"
+                    title = f"{APP_NAME}: {text}"
+                    on_main_thread(lambda title=title: setattr(icon, "title", title))
+                    refresh_menu()
                 if color != state["color"]:
                     state["color"] = color
-                    icon.icon = render_icon(color)
+                    image = render_icon(color)
+                    on_main_thread(lambda image=image: setattr(icon, "icon", image))
                 if last_connected is not None and st["connected"] != last_connected:
                     log.info("TWS %s", "connected" if st["connected"] else "disconnected")
                 last_connected = st["connected"]
@@ -380,8 +510,8 @@ def run_tray() -> int:
 
 
 def main() -> int:
-    if sys.platform != "win32":
-        print("The tray app is Windows-only; use run-bridge.ps1 / uvicorn directly elsewhere.")
+    if not (IS_WINDOWS or IS_MAC):
+        print("The tray app runs on Windows and macOS; elsewhere run uvicorn directly (see README).")
         return 1
     try:
         return run_tray()
@@ -390,7 +520,7 @@ def main() -> int:
         if not logging.getLogger().handlers:
             setup_logging("INFO")
         logging.getLogger("ib_bridge.tray").exception("fatal")
-        message_box(f"{APP_NAME} could not start:\n\n{exc}\n\nSee the log at {log_path()}", icon=0x10)
+        message_box(f"{APP_NAME} could not start:\n\n{exc}\n\nSee the log at {log_path()}", icon=MB_ERROR)
         return 1
 
 

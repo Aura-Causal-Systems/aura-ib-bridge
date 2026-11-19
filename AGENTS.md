@@ -27,11 +27,25 @@ internal infrastructure details (Cloudflare/D1 ids, private repo paths).
 - `instruments.json` is read from `sys._MEIPASS` when frozen, from the repo root otherwise.
 - Config written by PowerShell 5 / Notepad may carry a BOM: read with `utf-8-sig`.
 
+## Packaging gotchas (macOS)
+- Build: `packaging/build_mac.sh` (`--app` skips the disk image). PyInstaller cannot cross-compile:
+  Apple Silicon and Intel disk images are built on their own runners (`macos-latest`, `macos-15-intel`).
+- Platform differences live only in the helpers at the top of `tray.py` (message box via `osascript`,
+  autostart via `~/Library/LaunchAgents/com.auracausalsystems.ib-bridge.plist`, `pbcopy`, `open`).
+- AppKit must be touched on the main thread only: the watcher thread changes the icon/title/menu
+  through `tray.on_main_thread` (`PyObjCTools.AppHelper.callAfter`). macOS builds the menu once, so
+  call `refresh_menu()` after anything its text or ticks depend on changes.
+- `LSUIElement` (no Dock icon) and version strings are set in Info.plist after PyInstaller; that breaks
+  its signature, so the script re-signs ad hoc (`codesign --sign -`). Not notarised: no Developer ID yet.
+- Settings dir is `~/Library/Application Support/aura-ib-bridge` (`config._appdata`); `APPDATA`, when
+  set, still wins (tests rely on it).
+
 ## Release
 `ib_bridge/__init__.py` version → push → publish a GitHub Release tagged `v<version>` with no files:
 `.github/workflows/release.yml` builds on `windows-latest` (python.org 3.12 in a standard venv,
 `.venv\Scripts\python.exe`; Inno Setup via choco if missing) and attaches
-`Aura-IB-Bridge-Setup.exe` + `SHA256SUMS.txt` (stable name; desks link to `releases/latest/download/...`).
+`Aura-IB-Bridge-Setup.exe` + `SHA256SUMS.txt` (stable name; desks link to `releases/latest/download/...`),
+and on two Mac runners attaches `Aura-IB-Bridge-mac-{AppleSilicon,Intel}.dmg` + `SHA256SUMS-mac-<arch>.txt`.
 Don't upload the installer by hand: browser uploads fail on slow uplinks. Re-run: Actions → release →
 Run workflow with the tag. `build.ps1` must keep working with both conda (`.venv\python.exe`) and venv.
 The installer replaces the pre-0.3 "IB Copilot Bridge"; the app migrates `%APPDATA%\ib-copilot`

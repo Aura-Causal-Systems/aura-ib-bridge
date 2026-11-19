@@ -1,4 +1,5 @@
-"""Generates packaging/bridge.ico from the same drawing the tray uses (no binary assets in git)."""
+"""Generates packaging/bridge.ico (Windows) and packaging/bridge.icns (macOS) from the same drawing the
+tray uses (no binary assets in git)."""
 
 from __future__ import annotations
 
@@ -13,3 +14,7 @@ out = Path(__file__).with_name("bridge.ico")
 base = render_icon(COLOR_CONNECTED, 256)
 base.save(out, format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print(f"wrote {out}")
+
+icns = Path(__file__).with_name("bridge.icns")
+render_icon(COLOR_CONNECTED, 1024).save(icns, format="ICNS")
+print(f"wrote {icns}")
